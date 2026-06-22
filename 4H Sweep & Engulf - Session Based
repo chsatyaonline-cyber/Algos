@@ -1,0 +1,50 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © us916523
+
+//@version=5
+strategy("4H Sweep & Engulf - Session Based", overlay=true, initial_capital=1000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// 1. Inputs
+rr_input       = input.float(title="Risk to Reward Ratio", defval=1.0, minval=0.1, step=0.1)
+session_input  = input.string(title="Trading Session Window", defval="0800-1700")
+timezone_input = input.string(title="Session Timezone", defval="America/New_York")
+
+// 2. Session and Time Checks
+// Checks if the current candle falls within the allowed trading session window
+in_session = not na(time(timeframe.period, session_input, timezone_input))
+
+// Identifies the exact 4:45 PM (16:45) exit bar in the specified timezone
+is_exit_time = (hour(time, timezone_input) == 16) and (minute(time, timezone_input) == 45)
+
+// 3. Timeframe Check (Must be 4-Hour chart)
+is4H = timeframe.period == "240"
+
+// 4. Define Previous Candle Variables
+prev_low = low[1]
+prev_high = high[1]
+
+// 5. Define the Entry Conditions
+cond_open = open > prev_low
+cond_sweep = low < prev_low
+cond_close = close > prev_high
+
+// 6. Combine Conditions (Only entry if 'in_session' is true)
+longCondition = is4H and in_session and cond_open and cond_sweep and cond_close
+
+// 7. Calculate Stop Loss and Take Profit Levels
+sl_level = low
+risk = close - sl_level
+tp_level = close + (risk * rr_input)
+
+// 8. Execute Entry and Exit Logic
+// Handle regular trade entries
+if (longCondition)
+    strategy.entry("Long Entry", strategy.long)
+    strategy.exit("Exit Long", from_entry="Long Entry", stop=sl_level, limit=tp_level)
+
+// Handle the manual end-of-day close at 4:45 PM EST
+if (is_exit_time)
+    strategy.close("Long Entry", comment="EOD Manual Close (16:45)")
+
+// 9. Visual Confirmation
+plotshape(series=longCondition, title="Long Signal", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.normal)

@@ -1,0 +1,43 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © us916523
+
+//@version=5
+strategy("4H Sweep and Engulf Long - Adjustable RR", overlay=true, initial_capital=1000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// 1. Inputs
+// This adds a user-adjustable setting in the TradingView UI.
+// Default is set to 1.0, but you can change it to 1.5, 2.0, etc.
+rr_input = input.float(title="Risk to Reward Ratio", defval=1.0, minval=0.1, step=0.1)
+
+// 2. Timeframe Check
+is4H = timeframe.period == "240"
+
+// 3. Define Previous Candle Variables
+prev_low = low[1]
+prev_high = high[1]
+
+// 4. Define the Entry Conditions
+cond_open = open > prev_low
+cond_sweep = low < prev_low
+cond_close = close > prev_high
+
+// 5. Combine Conditions
+longCondition = is4H and cond_open and cond_sweep and cond_close
+
+// 6. Calculate Stop Loss and Take Profit Levels
+// The Stop Loss is set at the sweep low.
+sl_level = low
+// Risk is the distance between entry (close) and stop loss
+risk = close - sl_level
+// Take profit multiplies the risk by your custom input ratio
+tp_level = close + (risk * rr_input)
+
+// 7. Execute Entry and Exit
+if (longCondition)
+    // Execute the buy order
+    strategy.entry("Long Entry", strategy.long)
+    // Automatically attach the SL and adjusted TP
+    strategy.exit("Exit Long", from_entry="Long Entry", stop=sl_level, limit=tp_level)
+
+// 8. Visual Confirmation
+plotshape(series=longCondition, title="Long Signal", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.normal)

@@ -1,0 +1,120 @@
+//@version=5
+strategy("CRT (Candle Range Theory) Strategy", overlay=true, default_qty_type=strategy.fixed, default_qty_value=1, process_orders_on_close=true)
+
+// ---------------- Inputs ----------------
+rewardRiskRatio = input.float(1.5, "Risk : Reward (e.g. 1.5 = 1:1.5)", minval=0.1, step=0.1)
+enableLongs     = input.bool(true, "Enable Bullish CRT (Long) Trades")
+enableShorts    = input.bool(true, "Enable Bearish CRT (Short) Trades")
+
+riskUsdInput    = input.float(375, "Risk Per Trade (USD)", minval=1)
+allowMinOneCtr  = input.bool(true, "Allow 1 Contract Even If It Exceeds Risk Target", tooltip="If the stop distance is so tight (or point value so high) that even 1 contract risks more than your target, take 1 contract anyway instead of skipping the trade.")
+maxContractsInput = input.int(20, "Max Contracts Per Trade", minval=1)
+
+eodHourInput   = input.int(16, "EOD Close Hour (NY Time, 24h)", minval=0, maxval=23)
+eodMinuteInput = input.int(58, "EOD Close Minute (NY Time)", minval=0, maxval=59)
+
+// ---------------- CRT Detection ----------------
+// candle[1] = first/reference candle, current bar (candle[0]) = the sweep candle
+firstHigh  = high[1]
+firstLow   = low[1]
+secondHigh = high
+secondLow  = low
+secondClose = close
+
+tick = syminfo.mintick
+
+// Bullish CRT: current candle sweeps below the previous candle's low, then closes back inside the previous candle's range
+bullishCRT = secondLow < firstLow and secondClose > firstLow and secondClose < firstHigh
+
+// Bearish CRT: current candle sweeps above the previous candle's high, then closes back inside the previous candle's range
+bearishCRT = secondHigh > firstHigh and secondClose < firstHigh and secondClose > firstLow
+
+// ---------------- EOD Cutoff Check ----------------
+// True from the cutoff time (NY) until midnight; resets automatically at the start of each new day.
+nyHour   = hour(time, "America/New_York")
+nyMinute = minute(time, "America/New_York")
+pastEODCutoff = nyHour > eodHourInput or (nyHour == eodHourInput and nyMinute >= eodMinuteInput)
+
+// ---------------- Trade Level Storage ----------------
+var float longEntry = na
+var float longSL    = na
+var float longTP    = na
+var float shortEntry = na
+var float shortSL    = na
+var float shortTP    = na
+
+// ---------------- Position Sizing ----------------
+// Converts a dollar risk target + stop distance (in points) into a whole number of contracts/shares, capped at the max contracts input.
+positionSize(stopDistancePoints, riskUsd, maxContracts) =>
+    dollarRiskPerContract = stopDistancePoints * syminfo.pointvalue
+    contracts = dollarRiskPerContract > 0 ? math.floor(riskUsd / dollarRiskPerContract) : 0
+    if contracts < 1 and allowMinOneCtr
+        contracts := 1
+    math.min(contracts, maxContracts)
+
+// ---------------- Order Expiration Tracking ----------------
+// Records the bar index of the signal (the 2nd/sweep candle) so the pending stop order can be
+// canceled if it hasn't filled by the close of the 3rd candle (bar_index == signalBar + 2).
+var int longSignalBar  = na
+var int shortSignalBar = na
+
+// ---------------- Bullish CRT Setup ----------------
+if enableLongs and bullishCRT and not pastEODCutoff
+    entryPrice = secondHigh + tick
+    tpPrice    = firstHigh
+    reward     = tpPrice - entryPrice
+    if reward > 0
+        longEntry := entryPrice
+        longTP    := tpPrice
+        longSL    := entryPrice - (reward / rewardRiskRatio)
+        qty       = positionSize(entryPrice - longSL, riskUsdInput, maxContractsInput)
+        if qty > 0
+            strategy.cancel("Short")
+            strategy.entry("Long", strategy.long, qty=qty, stop=longEntry)
+            longSignalBar := bar_index
+
+// ---------------- Bearish CRT Setup ----------------
+if enableShorts and bearishCRT and not pastEODCutoff
+    entryPrice = secondLow - tick
+    tpPrice    = firstLow
+    reward     = entryPrice - tpPrice
+    if reward > 0
+        shortEntry := entryPrice
+        shortTP    := tpPrice
+        shortSL    := entryPrice + (reward / rewardRiskRatio)
+        qty        = positionSize(shortSL - entryPrice, riskUsdInput, maxContractsInput)
+        if qty > 0
+            strategy.cancel("Long")
+            strategy.entry("Short", strategy.short, qty=qty, stop=shortEntry)
+            shortSignalBar := bar_index
+
+// ---------------- Cancel Unfilled Entry After 3rd Candle ----------------
+if not na(longSignalBar) and bar_index >= longSignalBar + 2
+    strategy.cancel("Long")
+    longSignalBar := na
+
+if not na(shortSignalBar) and bar_index >= shortSignalBar + 2
+    strategy.cancel("Short")
+    shortSignalBar := na
+
+// ---------------- Exits (TP / SL) ----------------
+if not na(longEntry)
+    strategy.exit("Long Exit", "Long", stop=longSL, limit=longTP)
+
+if not na(shortEntry)
+    strategy.exit("Short Exit", "Short", stop=shortSL, limit=shortTP)
+
+// ---------------- End-of-Day Flatten ----------------
+// Closes any open position and cancels any resting stop orders once the bar's New York time reaches the cutoff.
+// Using a >= threshold (rather than a fixed session window) means this fires on the first available bar
+// at/after the cutoff regardless of chart timeframe, instead of silently missing on charts where no bar
+// happens to align exactly with a specific minute.
+if pastEODCutoff
+    strategy.close_all(comment="EOD Close")
+    strategy.cancel_all()
+    longSignalBar := na
+    shortSignalBar := na
+
+// ---------------- Visuals ----------------
+plotshape(bullishCRT, title="Bullish CRT", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.tiny)
+plotshape(bearishCRT, title="Bearish CRT", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.tiny)

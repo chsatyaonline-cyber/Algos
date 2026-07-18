@@ -1,3 +1,7 @@
+//The reason it has gap slippage is beacuse it is ont he wrong timeframe, just have it either not take any trades at a certain point, or just cutt of all trades at the nearest candle before the gap, prolly best to do both. 
+
+
+
 //@version=5
 strategy("CRT (Candle Range Theory) Strategy", overlay=true, default_qty_type=strategy.fixed, default_qty_value=1, process_orders_on_close=true)
 

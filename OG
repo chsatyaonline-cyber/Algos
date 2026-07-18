@@ -1,0 +1,115 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © us916523
+
+//@version=6
+strategy(
+     "First 30-Minute Opening Range Breakout",
+     overlay = true,
+     pyramiding = 0,
+     process_orders_on_close = true,
+     calc_on_order_fills = true,
+     default_qty_type = strategy.fixed,
+     default_qty_value = 1)
+
+// -----------------------------------------------------------------------------
+// Inputs
+// -----------------------------------------------------------------------------
+contracts          = input.int(1, "Contracts", minval = 1)
+tradeDirection     = input.string("Both", "Allowed Trade Direction", options = ["Both", "Long Only", "Short Only"])
+confirmationPoints = input.float(2.0, "Breakout Close Confirmation (points)", minval = 0.0, step = 0.25)
+targetPoints       = input.float(10.0, "Profit Target (points)", minval = 0.25, step = 0.25)
+showSessionShade   = input.bool(true, "Shade Opening Range Window")
+
+// All session calculations use New York time, including daylight-saving time.
+string sessionTimeZone = "America/New_York"
+
+// This strategy is intentionally restricted to a 15-minute chart.
+if barstate.isfirst and not (timeframe.isminutes and timeframe.multiplier == 15)
+    runtime.error("This strategy must be used on a 15-minute chart.")
+
+// The two candles opening at 09:30 and 09:45 build the opening range.
+bool inOpeningRange = not na(time(timeframe.period, "0930-1000", sessionTimeZone))
+
+// Eligible signal candles open from 10:00 through 11:30. The 11:30 candle
+// closes at 11:45. A candle closing at 12:00 is excluded, so no entry occurs
+// at or after the noon cutoff.
+bool inEntryWindow = not na(time(timeframe.period, "1000-1145", sessionTimeZone))
+
+bool firstOpeningRangeBar = inOpeningRange and not inOpeningRange[1]
+bool openingRangeJustEnded = not inOpeningRange and inOpeningRange[1]
+
+var float openingRangeHigh = na
+var float openingRangeLow  = na
+var bool  rangeReady       = false
+var bool  tradeTakenToday  = false
+
+var float activeStop   = na
+var float activeTarget = na
+
+// Reset and build a fresh range each trading day.
+if firstOpeningRangeBar
+    openingRangeHigh := high
+    openingRangeLow := low
+    rangeReady := false
+    tradeTakenToday := false
+
+else if inOpeningRange
+    openingRangeHigh := math.max(openingRangeHigh, high)
+    openingRangeLow := math.min(openingRangeLow, low)
+
+if openingRangeJustEnded
+    rangeReady := true
+
+bool longsAllowed  = tradeDirection == "Both" or tradeDirection == "Long Only"
+bool shortsAllowed = tradeDirection == "Both" or tradeDirection == "Short Only"
+
+float longTrigger  = openingRangeHigh + confirmationPoints
+float shortTrigger = openingRangeLow - confirmationPoints
+
+// A signal occurs only when a completed 15-minute candle crosses and closes
+// beyond the selected confirmation level.
+bool longBreakout = barstate.isconfirmed and rangeReady and inEntryWindow and
+     not tradeTakenToday and strategy.position_size == 0 and longsAllowed and
+     close >= longTrigger and close[1] < longTrigger
+
+bool shortBreakout = barstate.isconfirmed and rangeReady and inEntryWindow and
+     not tradeTakenToday and strategy.position_size == 0 and shortsAllowed and
+     close <= shortTrigger and close[1] > shortTrigger
+
+if longBreakout
+    activeStop := openingRangeLow
+    activeTarget := na
+    tradeTakenToday := true
+    strategy.entry("Long", strategy.long, qty = contracts)
+
+if shortBreakout
+    activeStop := openingRangeHigh
+    activeTarget := na
+    tradeTakenToday := true
+    strategy.entry("Short", strategy.short, qty = contracts)
+
+// Lock the ten-point target to the actual strategy fill price.
+if strategy.position_size > 0 and strategy.position_size[1] <= 0
+    activeTarget := strategy.position_avg_price + targetPoints
+
+if strategy.position_size < 0 and strategy.position_size[1] >= 0
+    activeTarget := strategy.position_avg_price - targetPoints
+
+if strategy.position_size > 0
+    strategy.exit("Long Exit", from_entry = "Long", stop = activeStop, limit = activeTarget)
+
+if strategy.position_size < 0
+    strategy.exit("Short Exit", from_entry = "Short", stop = activeStop, limit = activeTarget)
+
+// Clear stored order levels after a position closes.
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    activeStop := na
+    activeTarget := na
+
+// Opening-range visuals.
+plot(rangeReady ? openingRangeHigh : na, "Opening Range High", color = color.rgb(112, 72, 232), linewidth = 2, style = plot.style_linebr)
+plot(rangeReady ? openingRangeLow : na, "Opening Range Low", color = color.rgb(112, 72, 232), linewidth = 2, style = plot.style_linebr)
+bgcolor(showSessionShade and inOpeningRange ? color.new(color.blue, 90) : na, title = "Opening Range Window")
+
+plotshape(longBreakout, "Long Breakout", shape.triangleup, location.belowbar, color = color.lime, size = size.small, text = "LONG")
+plotshape(shortBreakout, "Short Breakout", shape.triangledown, location.abovebar, color = color.red, size = size.small, text = "SHORT")

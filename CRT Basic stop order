@@ -1,0 +1,69 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © us916523
+
+//@version=5
+strategy("CRT (Candle Range Theory) Strategy", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100, process_orders_on_close=true)
+
+// ---------------- Inputs ----------------
+rewardRiskRatio = input.float(1.5, "Risk : Reward (e.g. 1.5 = 1:1.5)", minval=0.1, step=0.1)
+enableLongs     = input.bool(true, "Enable Bullish CRT (Long) Trades")
+enableShorts    = input.bool(true, "Enable Bearish CRT (Short) Trades")
+
+// ---------------- CRT Detection ----------------
+// candle[1] = first/reference candle, current bar (candle[0]) = the sweep candle
+firstHigh  = high[1]
+firstLow   = low[1]
+secondHigh = high
+secondLow  = low
+secondClose = close
+
+tick = syminfo.mintick
+
+// Bullish CRT: current candle sweeps below the previous candle's low, then closes back inside the previous candle's range
+bullishCRT = secondLow < firstLow and secondClose > firstLow and secondClose < firstHigh
+
+// Bearish CRT: current candle sweeps above the previous candle's high, then closes back inside the previous candle's range
+bearishCRT = secondHigh > firstHigh and secondClose < firstHigh and secondClose > firstLow
+
+// ---------------- Trade Level Storage ----------------
+var float longEntry = na
+var float longSL    = na
+var float longTP    = na
+var float shortEntry = na
+var float shortSL    = na
+var float shortTP    = na
+
+// ---------------- Bullish CRT Setup ----------------
+if enableLongs and bullishCRT
+    entryPrice = secondHigh + tick
+    tpPrice    = firstHigh
+    reward     = tpPrice - entryPrice
+    if reward > 0
+        longEntry := entryPrice
+        longTP    := tpPrice
+        longSL    := entryPrice - (reward / rewardRiskRatio)
+        strategy.cancel("Short")
+        strategy.entry("Long", strategy.long, stop=longEntry)
+
+// ---------------- Bearish CRT Setup ----------------
+if enableShorts and bearishCRT
+    entryPrice = secondLow - tick
+    tpPrice    = firstLow
+    reward     = entryPrice - tpPrice
+    if reward > 0
+        shortEntry := entryPrice
+        shortTP    := tpPrice
+        shortSL    := entryPrice + (reward / rewardRiskRatio)
+        strategy.cancel("Long")
+        strategy.entry("Short", strategy.short, stop=shortEntry)
+
+// ---------------- Exits (TP / SL) ----------------
+if not na(longEntry)
+    strategy.exit("Long Exit", "Long", stop=longSL, limit=longTP)
+
+if not na(shortEntry)
+    strategy.exit("Short Exit", "Short", stop=shortSL, limit=shortTP)
+
+// ---------------- Visuals ----------------
+plotshape(bullishCRT, title="Bullish CRT", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.tiny)
+plotshape(bearishCRT, title="Bearish CRT", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.tiny)

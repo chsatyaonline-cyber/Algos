@@ -2,12 +2,15 @@
 // © us916523
 
 //@version=5
-strategy("CRT (Candle Range Theory) Strategy", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100, process_orders_on_close=true)
+strategy("CRT (Candle Range Theory) Strategy", overlay=true, default_qty_type=strategy.fixed, default_qty_value=1, process_orders_on_close=true)
 
 // ---------------- Inputs ----------------
 rewardRiskRatio = input.float(1.5, "Risk : Reward (e.g. 1.5 = 1:1.5)", minval=0.1, step=0.1)
 enableLongs     = input.bool(true, "Enable Bullish CRT (Long) Trades")
 enableShorts    = input.bool(true, "Enable Bearish CRT (Short) Trades")
+
+riskUsdInput    = input.float(375, "Risk Per Trade (USD)", minval=1)
+allowMinOneCtr  = input.bool(true, "Allow 1 Contract Even If It Exceeds Risk Target", tooltip="If the stop distance is so tight (or point value so high) that even 1 contract risks more than your target, take 1 contract anyway instead of skipping the trade.")
 
 // ---------------- CRT Detection ----------------
 // candle[1] = first/reference candle, current bar (candle[0]) = the sweep candle
@@ -33,6 +36,15 @@ var float shortEntry = na
 var float shortSL    = na
 var float shortTP    = na
 
+// ---------------- Position Sizing ----------------
+// Converts a dollar risk target + stop distance (in points) into a whole number of contracts/shares.
+positionSize(stopDistancePoints, riskUsd) =>
+    dollarRiskPerContract = stopDistancePoints * syminfo.pointvalue
+    contracts = dollarRiskPerContract > 0 ? math.floor(riskUsd / dollarRiskPerContract) : 0
+    if contracts < 1 and allowMinOneCtr
+        contracts := 1
+    contracts
+
 // ---------------- Bullish CRT Setup ----------------
 if enableLongs and bullishCRT
     entryPrice = secondHigh + tick
@@ -42,8 +54,10 @@ if enableLongs and bullishCRT
         longEntry := entryPrice
         longTP    := tpPrice
         longSL    := entryPrice - (reward / rewardRiskRatio)
-        strategy.cancel("Short")
-        strategy.entry("Long", strategy.long, stop=longEntry)
+        qty       = positionSize(entryPrice - longSL, riskUsdInput)
+        if qty > 0
+            strategy.cancel("Short")
+            strategy.entry("Long", strategy.long, qty=qty, stop=longEntry)
 
 // ---------------- Bearish CRT Setup ----------------
 if enableShorts and bearishCRT
@@ -54,8 +68,10 @@ if enableShorts and bearishCRT
         shortEntry := entryPrice
         shortTP    := tpPrice
         shortSL    := entryPrice + (reward / rewardRiskRatio)
-        strategy.cancel("Long")
-        strategy.entry("Short", strategy.short, stop=shortEntry)
+        qty        = positionSize(shortSL - entryPrice, riskUsdInput)
+        if qty > 0
+            strategy.cancel("Long")
+            strategy.entry("Short", strategy.short, qty=qty, stop=shortEntry)
 
 // ---------------- Exits (TP / SL) ----------------
 if not na(longEntry)
